@@ -1,0 +1,7 @@
+# Зависимости для video_to_mp3.py
+# 
+# Примечание: ffmpeg должен быть установлен в системе отдельно
+# macOS: brew install ffmpeg
+# Ubuntu/Debian: sudo apt install ffmpeg
+# Windows: https://ffmpeg.org/download.html
+
