@@ -1,6 +1,11 @@
 # Зависимости для video_to_mp3.py
 requests>=2.31.0
 python-dotenv>=1.0.0
+flask>=2.3.0
+
+# GUI интерфейс:
+# - video_to_mp3_gui.py использует встроенный tkinter (может не работать на старых версиях macOS)
+# - video_to_mp3_web.py использует Flask (веб-интерфейс, работает везде)
 
 # Примечание: ffmpeg должен быть установлен в системе отдельно
 # macOS: brew install ffmpeg

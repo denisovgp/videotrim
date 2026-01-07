@@ -87,3 +87,6 @@ outputs/
 temp/
 tmp/
 
+
+# Uploads
+uploads/
