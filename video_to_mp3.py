@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-Скрипт для конвертации видео файла в сжатый MP3 файл и транскрипции через OpenRouter API.
-Использование: python video_to_mp3.py <путь_к_видео> [bitrate] [--no-transcribe]
+Конвертер видео в MP3 с автоматической транскрипцией через OpenRouter API.
+
+Использование:
+    python video_to_mp3.py <путь_к_видео> [bitrate] [--no-transcribe]
+
+Примеры:
+    python video_to_mp3.py video.mp4
+    python video_to_mp3.py video.mp4 192k
+    python video_to_mp3.py video.mp4 192k --no-transcribe
 """
 
 import os
@@ -42,11 +49,6 @@ def find_ffmpeg():
             continue
     
     return None
-
-
-def check_ffmpeg():
-    """Проверяет наличие ffmpeg в системе."""
-    return find_ffmpeg() is not None
 
 
 def convert_video_to_mp3(video_path, output_dir, bitrate='128k', ffmpeg_path='ffmpeg'):
@@ -188,6 +190,45 @@ def split_audio_into_chunks(mp3_path, output_dir, chunk_duration=300, ffmpeg_pat
     
     print(f"✓ Создано {len(chunks)} частей")
     return chunks
+
+
+def _extract_text_from_response(response_text):
+    """
+    Извлекает текст из ответа API, даже если JSON поврежден.
+    
+    Args:
+        response_text: Текст ответа от API
+    
+    Returns:
+        Извлеченный текст или None
+    """
+    # Ищем текст в JSON-подобной структуре
+    text_match = re.search(r'"text"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', response_text, re.DOTALL)
+    if text_match:
+        text = text_match.group(1)
+        # Убираем экранированные символы
+        text = text.replace('\\"', '"').replace('\\n', ' ').replace('\\t', ' ')
+        return text
+    
+    # Если не нашли, пытаемся извлечь другим способом
+    if '"text"' in response_text:
+        parts = response_text.split('"text"', 1)
+        if len(parts) > 1:
+            remaining = parts[1].strip()
+            if remaining.startswith(':'):
+                remaining = remaining[1:].strip()
+                if remaining.startswith('"'):
+                    end_quote = remaining.find('"', 1)
+                    if end_quote != -1:
+                        return remaining[1:end_quote]
+    
+    # Убираем управляющие символы и пробуем использовать как текст
+    text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', response_text)
+    text = re.sub(r'^\s*\{\s*"text"\s*:\s*"', '', text)
+    text = re.sub(r'"\s*\}\s*$', '', text)
+    text = text.strip().strip('"')
+    
+    return text if text else None
 
 
 def generate_word_timestamps(text, duration, chunk_offset=0):
@@ -389,61 +430,27 @@ def transcribe_audio_chunk(chunk_path, chunk_offset, api_key, model='mistralai/v
                 return transcription_data
             except json.JSONDecodeError as e:
                 print(f"⚠ Ошибка парсинга JSON: {e}")
-                print("Пытаюсь извлечь текст и сгенерировать таймстемпы...")
+                print("Извлекаю текст и генерирую приблизительные таймстемпы...")
                 
-                # Пытаемся извлечь текст из ответа
-                text = None
+                # Извлекаем текст из ответа
+                text = _extract_text_from_response(transcription_text)
                 
-                # Ищем текст в JSON-подобной структуре
-                text_match = re.search(r'"text"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', transcription_text, re.DOTALL)
-                if text_match:
-                    text = text_match.group(1)
-                    # Убираем экранированные символы
-                    text = text.replace('\\"', '"').replace('\\n', ' ').replace('\\t', ' ')
-                else:
-                    # Если не нашли, берем весь текст после "text":
-                    if '"text"' in transcription_text:
-                        parts = transcription_text.split('"text"', 1)
-                        if len(parts) > 1:
-                            # Пытаемся извлечь текст между кавычками
-                            remaining = parts[1].strip()
-                            if remaining.startswith(':'):
-                                remaining = remaining[1:].strip()
-                                if remaining.startswith('"'):
-                                    # Извлекаем текст до закрывающей кавычки
-                                    end_quote = remaining.find('"', 1)
-                                    if end_quote != -1:
-                                        text = remaining[1:end_quote]
-                
-                # Если не удалось извлечь, используем весь ответ как текст
                 if not text:
-                    # Убираем управляющие символы и пробуем использовать как текст
-                    text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', transcription_text)
-                    # Убираем JSON-структуру если есть
-                    text = re.sub(r'^\s*\{\s*"text"\s*:\s*"', '', text)
-                    text = re.sub(r'"\s*\}\s*$', '', text)
-                    text = text.strip().strip('"')
+                    text = transcription_text
                 
-                if text:
-                    # Получаем длительность аудио и генерируем таймстемпы
-                    ffmpeg_path = find_ffmpeg()
-                    duration = get_audio_duration(chunk_path, ffmpeg_path) if ffmpeg_path else None
-                    
-                    words = []
-                    if duration:
-                        words = generate_word_timestamps(text, duration, chunk_offset)
-                        print(f"✓ Сгенерировано {len(words)} приблизительных таймстемпов")
-                    
-                    return {
-                        "text": text,
-                        "words": words
-                    }
-                else:
-                    # Если ничего не получилось, возвращаем исходный текст
-                    return {
-                        "text": transcription_text,
-                        "words": []
-                    }
+                # Генерируем таймстемпы
+                ffmpeg_path = find_ffmpeg()
+                duration = get_audio_duration(chunk_path, ffmpeg_path) if ffmpeg_path else None
+                
+                words = []
+                if duration:
+                    words = generate_word_timestamps(text, duration, chunk_offset)
+                    print(f"✓ Сгенерировано {len(words)} приблизительных таймстемпов")
+                
+                return {
+                    "text": text,
+                    "words": words
+                }
         else:
             print(f"✗ Ошибка: неожиданный формат ответа от API")
             return None
